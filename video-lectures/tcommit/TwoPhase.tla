@@ -13,7 +13,12 @@
 (* transaction, an event represented here by the TM spontaneously deciding *)
 (* to abort.                                                               *)
 (***************************************************************************)
+
+EXTENDS TLC
+
 CONSTANT RM  \* The set of resource managers
+
+Symmetry == Permutations(RM)
 
 VARIABLES
   rmState,       \* rmState[r] is the state of resource manager r.
