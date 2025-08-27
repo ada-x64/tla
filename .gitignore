@@ -1,2 +1,4 @@
 *.out
+*.log
+_apalache-out
 **/states/
