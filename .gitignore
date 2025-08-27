@@ -3,3 +3,4 @@
 _apalache-out
 **/states/
 tla2tools.jar
+.tlacache

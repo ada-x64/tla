@@ -1,4 +1,4 @@
----- MODULE Base ----
+-------------------------------- MODULE Base ----------------------------------
 
 EXTENDS TLC, Integers, FiniteSets
 
@@ -16,35 +16,14 @@ VARIABLES
     Deps
 vars == <<State, Owners, Deps>>
 
+-------------------------------------------------------------------------------
+\* Helpers
+
 DependsOn(a,b) == b \in Deps[a].deps
 Owns(a,b) == b \in Owners[a].owners
 
 -------------------------------------------------------------------------------
-\* Invariants *\
-
-TypeOK ==
-    \A s \in Services :
-        /\ State[s] \in {"register", "init", "up", "down"}
-        /\ Owners[s].service = s /\ Owners[s].owners \subseteq Services
-        /\ Deps[s].service = s /\ Deps[s].deps \subseteq Services
-
-\* while it would be good to add a recursive definition here this will suffice
-\* IF we are sure to add _all_ recursive Deps of a to deps[a]
-NonCyclicDeps ==
-    \A a \in Services, b \in Services :
-        /\ b \in Deps[a].deps => a \notin Deps[b].deps
-
--------------------------------------------------------------------------------
-\* Main cycles
-
-Init == /\ State = [ s \in Services |-> "register" ]
-        /\ Owners = [ s \in Services |-> [service |-> s, owners |-> {}]]
-        /\ Deps = [ s \in Services |-> [service |-> s, deps |-> {}]]
-
-AllReady == \A s \in Services : State[s] /= "register"
-
-------------------------
-\* Actions
+\* Commands
 
 SpinUp(a) ==
     /\ State[a] = "down"
@@ -60,28 +39,35 @@ SpinUp(a) ==
 
 SpinDown(a) ==
     /\ State[a] = "up"
-    /\ State' = [ State EXCEPT ![a] = "down" ]
+    /\ State' = [ State EXCEPT ![a] = "deinit" ]
     /\ UNCHANGED <<Owners, Deps>>
 
--------------------
+-------------------------------------------------------------------------------
 \* Conditions
 
+\* Requires State[a] = "up"
 Ownership(a) ==
-    /\ State[a] = "up"
     /\  \/  /\ \A b \in Owners[a].owners : State[b] = "down"
-            /\ State' = [State EXCEPT ![a] = "down"]
+            /\ State' = [State EXCEPT ![a] = "deinit"]
         \/ UNCHANGED State
     /\ UNCHANGED << Owners, Deps >>
 
+\* Requires State[a] = "init"
 FinishInit(a) ==
-    /\  State[a] = "init"
-    /\  \/  /\ \E b \in Deps[a].deps : State[b] = "down"
+    \* This may need to be altered: suppose a is init but its deps are down
+    \* - we should try to reawaken them and fail once we know they've failed
+    /\  \/  /\ \E b \in Deps[a].deps : (State[b] = "deinit" \/ State[b] = "down")
             \* NB: Ownership semantics will determine spin-down behavior of owned items
             /\ State' = [State EXCEPT ![a] = "down"]
         \/  /\ \A b \in Deps[a].deps : State[b] = "up"
             /\ State' = [State EXCEPT ![a] = "up"]
-        \/ UNCHANGED State
+        \/ UNCHANGED State \* still spinning up
     /\ UNCHANGED << Owners, Deps >>
+
+\* Requires State[a] = "deinit"
+FinishDeinit(a) ==
+    /\  \/ UNCHANGED State \* still spinning down
+        \/ State' = [State EXCEPT ![a] = "down"]
 
 -------------------------------------------------------------------------------
 \* Registration
@@ -131,6 +117,11 @@ FinishRegistration(a) ==
         /\  UNCHANGED Deps
 
 -------------------------------------------------------------------------------
+\* Spec
+
+Init == /\ State = [ s \in Services |-> "register" ]
+        /\ Owners = [ s \in Services |-> [service |-> s, owners |-> {}]]
+        /\ Deps = [ s \in Services |-> [service |-> s, deps |-> {}]]
 
 Next ==
     \* register
@@ -144,12 +135,48 @@ Next ==
             /\  \/ SpinUp(s)
                 \/ SpinDown(s)
                 \/ TRUE \* noop
-            /\  \/ Ownership(s)
-                \/ FinishInit(s)
+            /\  CASE State[s] = "init" -> FinishInit(s)
+                  [] State[s] = "deinit" -> FinishDeinit(s)
+                  [] State[s] = "up" -> Ownership(s)
+                  [] OTHER -> UNCHANGED <<State, Owners, Deps>>
     \* terminated - all down
     \/  /\ \A s \in Services : State[s] = "down"
         /\ UNCHANGED <<State, Owners, Deps>>
 
 Spec == Init /\ [][Next]_vars
 
-====
+-------------------------------------------------------------------------------
+\* Invariants
+
+TypeOK ==
+    \A s \in Services :
+        /\ State[s] \in {"register", "init", "up", "deinit", "down"}
+        /\ Owners[s].service = s /\ Owners[s].owners \subseteq Services
+        /\ Deps[s].service = s /\ Deps[s].deps \subseteq Services
+
+\* while it would be good to add a recursive definition here this will suffice
+\* IF we are sure to add _all_ recursive Deps of a to deps[a]
+NonCyclicDeps ==
+    \A a \in Services, b \in Services :
+        /\ b \in Deps[a].deps => a \notin Deps[b].deps
+
+-------------------------------------------------------------------------------
+\* Theorems
+
+UpMeansDepsUp ==
+    (\A s \in Services : ~State[s] = "register") =>
+        \A a \in Services :
+            (State[a] = "up" => \A b \in Deps[a].deps : State[b] = "up")
+
+THEOREM UpMeansDepsUp
+    OBVIOUS
+
+OwnersDownMeansServiceDown ==
+    (\A s \in Services : ~State[s] = "register") =>
+        \A a \in Services :
+            ((\A b \in Owners[a].owners : State[b] = "down") => State[a] = "down")
+
+THEOREM OwnersDownMeansServiceDown
+    OBVIOUS
+
+===============================================================================
