@@ -4,14 +4,9 @@ EXTENDS TLC, Integers, FiniteSets
 
 CONSTANTS
     \* @type: Set(Str);
-    Services 
+    Services
 symmetry == Permutations(Services)
 
-(*
-    Deps and Owners have the following structure:
-    Owners[i] = [service: i, owners: {o_1, o_2, ... o_j}] where o_k are owning services of i.
-    Deps[i] = [service: i, owners: {d_1, d_2, ..., d_j}] where d_k are deps of i.
-*)
 VARIABLES
     \* @type: Str -> Str;
     State,          
@@ -92,7 +87,7 @@ FinishInit(a) ==
     /\ UNCHANGED << Owners, Deps >>
 
 FinishDeinit(a) ==
-    /\  State[a] = "init"
+    /\  State[a] = "deinit"
         \/  /\ \A b \in Deps[a].deps : State[b] = "down"
             /\ State' = [State EXCEPT ![a] = "down"] 
         \/  UNCHANGED State
@@ -103,7 +98,6 @@ FinishDeinit(a) ==
 
 \* Add dependency t to s and all of its dependent services
 \* This ensures that our definiton of NonCyclicDeps holds
-\* NOTE: Subformula so do not add UNCHANGED
 AddDep(a, b) ==
     /\ a /= b \* no loops
     /\ ~DependsOn(b,a) \* no cycles
@@ -117,10 +111,11 @@ AddDep(a, b) ==
                 ELSE
                     Deps[c]
         ]
+    /\ UNCHANGED <<Owners, State>>
 
 \* Sim to AddDep
 AddOwner(a,b) ==
-    Owners' = [
+    /\ Owners' = [
             c \in Services |-> 
                 IF a = c THEN 
                     [Owners[c] EXCEPT !.owners = Owners[c].owners \cup {b} ]
@@ -129,32 +124,42 @@ AddOwner(a,b) ==
                 ELSE
                     Owners[c]
         ]
+    /\ UNCHANGED <<Deps, State>>
 
+FinishRegistration(a) == 
+    \/  /\  State' = [ State EXCEPT ![a] = "down" ]
+        /\  UNCHANGED <<Deps, Owners>>
+    \/  /\  State' = [ State EXCEPT ![a] = "init" ]
+        /\  Owners' = [ c \in Services |->
+                \* Add a to its own owners
+                IF a = c THEN
+                    [Owners[c] EXCEPT !.owners = Owners[c].owners \cup {a}]
+                ELSE
+                    Owners[c]
+            ]
+        /\  UNCHANGED <<Deps>>
 
-RegisterService(s) == 
-    /\ State[s] = "register"
-    /\  \/ State' = [ State EXCEPT ![s] = "down" ]
-        \/ State' = [ State EXCEPT ![s] = "init" ]
-        \/ UNCHANGED State \* add more owners and deps on next step
-    /\  \/ UNCHANGED Deps
-        \/ \E t \in Services : AddDep( s,t )
-    /\  \/ UNCHANGED Owners
-        \/ \E t \in Services : AddOwner( s,t )
 -------------------------------------------------------------------------------
 
 Next ==
-    \* perform actions
-    \/  /\ ~AllReady
-        /\ \A s \in Services : RegisterService(s)
-    \/  /\ AllReady
-        /\ \E s \in Services :
+    \* register
+    \/ \E a \in Services :
+        /\  State[a] = "register"
+        /\  \/ \E b \in Services : AddDep(a,b)
+            \/ \E b \in Services : AddOwner(a,b)
+            \/ FinishRegistration(a)
+    \* run
+    \/  \/ \E s \in Services :
             \/ InitService(s)
             \/ DeinitService(s)
-        /\ \A s \in Services :
+        \/ \E s \in Services :
             /\ Ownership(s)
             /\ FinishInit(s)
             /\ FinishDeinit(s)
+    \* terminated - all down
+    \/  /\ \A s \in Services : State[s] = "down"
+        /\ UNCHANGED <<State, Owners, Deps>>
 
-Spec == Init /\ [][Next]_vars
+Spec == Init /\ [][Next]_vars 
 
 ====
