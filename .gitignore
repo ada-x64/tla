@@ -2,3 +2,4 @@
 *.log
 _apalache-out
 **/states/
+tla2tools.jar
